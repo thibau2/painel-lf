@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>L&F · Buscador NFS-e</title>
+<style>
+  :root { --azul:#2563eb; --fundo:#0f172a; --carta:#1e293b; --borda:#334155;
+          --texto:#e2e8f0; --mudo:#94a3b8; --verde:#34d399; --verm:#f87171; --amar:#fbbf24 }
+  * { box-sizing:border-box }
+  body { margin:0; font-family:system-ui,Segoe UI,sans-serif; background:var(--fundo); color:var(--texto) }
+  header { display:flex; align-items:center; gap:10px; padding:14px 16px; background:var(--carta);
+           border-bottom:1px solid var(--borda); position:sticky; top:0; z-index:5 }
+  header h1 { font-size:16px; margin:0; flex:1 }
+  header button { background:none; border:1px solid var(--borda); color:var(--mudo);
+                  border-radius:8px; padding:6px 10px; font-size:12px }
+  nav { display:flex; gap:6px; padding:10px 12px; overflow-x:auto; background:var(--carta);
+        border-bottom:1px solid var(--borda); position:sticky; top:53px; z-index:5 }
+  nav button { flex:0 0 auto; background:none; border:1px solid var(--borda); color:var(--mudo);
+               border-radius:999px; padding:7px 14px; font-size:13px; white-space:nowrap }
+  nav button.on { background:var(--azul); border-color:var(--azul); color:#fff; font-weight:600 }
+  main { padding:14px; max-width:860px; margin:0 auto }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:14px }
+  .kpi { background:var(--carta); border:1px solid var(--borda); border-radius:12px; padding:14px }
+  .kpi .lbl { font-size:11px; color:var(--mudo); text-transform:uppercase; letter-spacing:.4px }
+  .kpi .val { font-size:20px; font-weight:700; margin-top:4px }
+  .card { background:var(--carta); border:1px solid var(--borda); border-radius:12px;
+          padding:14px; margin-bottom:14px; overflow-x:auto }
+  .card h2 { font-size:14px; margin:0 0 10px }
+  table { width:100%; border-collapse:collapse; font-size:13px; min-width:480px }
+  th { text-align:left; color:var(--mudo); font-size:11px; text-transform:uppercase;
+       padding:6px 8px; border-bottom:1px solid var(--borda) }
+  td { padding:7px 8px; border-bottom:1px solid #26334a }
+  .num { text-align:right; font-variant-numeric:tabular-nums }
+  .tag { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600 }
+  .ok { background:rgba(52,211,153,.15); color:var(--verde) }
+  .ruim { background:rgba(248,113,113,.15); color:var(--verm) }
+  .aten { background:rgba(251,191,36,.15); color:var(--amar) }
+  select { background:var(--carta); color:var(--texto); border:1px solid var(--borda);
+           border-radius:8px; padding:8px 10px; font-size:14px; margin-bottom:12px; max-width:100% }
+  .login { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px }
+  .login form { background:var(--carta); border:1px solid var(--borda); border-radius:14px;
+                padding:30px; width:320px; text-align:center }
+  .login input { width:100%; padding:11px; margin-bottom:10px; border-radius:8px;
+                 border:1px solid var(--borda); background:var(--fundo); color:var(--texto); font-size:15px }
+  .login button { width:100%; padding:11px; border:0; border-radius:8px; background:var(--azul);
+                  color:#fff; font-size:15px; font-weight:600 }
+  .muted { color:var(--mudo); font-size:12px }
+  #erro { color:var(--verm); font-size:13px; min-height:16px; margin-top:8px }
+</style></head><body>
+<div id="app"><div class="login"><div class="muted">carregando…</div></div></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+const sb = supabase.createClient('https://kaafckkfhdgujimtjxfx.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImthYWZja2tmaGRndWppbXRqeGZ4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcxMTk1NDMsImV4cCI6MjEwMjY5NTU0M30.lMXpVcf7Ex6tMXFpQR0wGDgrXNf96d0GqkfNbYkus24');
+const app = document.getElementById('app');
+const R$ = (v) => (v == null ? '–' : Number(v).toLocaleString('pt-BR', { style:'currency', currency:'BRL' }));
+const dBR = (s) => (!s ? '–' : String(s).slice(0,10).split('-').reverse().join('/'));
+const compBR = (c) => { const [a,m] = String(c).split('-'); return m + '/' + a; };
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let cache = {};
+
+async function q(tabela, monta) {
+  if (cache[tabela]) return cache[tabela];
+  let query = monta(sb.from(tabela));
+  const { data, error } = await query;
+  if (error) throw new Error(tabela + ': ' + error.message);
+  cache[tabela] = data || [];
+  return cache[tabela];
+}
+
+function telaLogin(msg) {
+  app.innerHTML = '<div class="login"><form id="f">'
+    + '<div style="font-size:32px">🔐</div><h1 style="font-size:17px">Buscador NFS-e</h1>'
+    + '<p class="muted">L&amp;F Gestão Contábil</p>'
+    + '<input id="em" type="email" placeholder="E-mail" autocomplete="username">'
+    + '<input id="se" type="password" placeholder="Senha" autocomplete="current-password">'
+    + '<button>Entrar</button><div id="erro">' + (msg || '') + '</div></form></div>';
+  document.getElementById('f').onsubmit = async (ev) => {
+    ev.preventDefault();
+    document.getElementById('erro').textContent = 'entrando…';
+    const { error } = await sb.auth.signInWithPassword({
+      email: document.getElementById('em').value.trim(),
+      password: document.getElementById('se').value,
+    });
+    if (error) document.getElementById('erro').textContent = 'e-mail ou senha incorretos';
+    else iniciar();
+  };
+}
+
+function casca(aba) {
+  app.innerHTML = '<header><h1>📊 L&amp;F · Buscador NFS-e</h1>'
+    + '<button onclick="sair()">sair</button></header>'
+    + '<nav>' + ['dashboard','conferencia','financeiro','parcelamentos'].map(a =>
+        '<button class="' + (a===aba?'on':'') + '" onclick="ir(\'' + a + '\')">'
+        + ({dashboard:'📈 Resumo',conferencia:'✅ Conferência',financeiro:'💰 Financeiro',parcelamentos:'💳 Parcelamentos'})[a]
+        + '</button>').join('') + '</nav><main id="m"><div class="muted">carregando…</div></main>';
+}
+
+window.sair = async () => { await sb.auth.signOut(); cache = {}; telaLogin(); };
+window.ir = (aba) => { casca(aba); telas[aba]().catch(e => {
+  document.getElementById('m').innerHTML = '<div class="card">⚠ ' + esc(e.message) + '</div>'; }); };
+
+const telas = {
+  async dashboard() {
+    const [ag, guias, fat, emp] = await Promise.all([
+      q('agregado', (t) => sb.from('agregado_espelho').select('*')),
+      q('das_guia', (t) => t.select('*')),
+      q('faturamento_log', (t) => t.select('*')),
+      q('empresas', (t) => t.select('cnpj, razao_social, ativa')),
+    ]);
+    const comps = [...new Set(ag.map(a => a.competencia))].sort().reverse();
+    const atual = comps.find(c => ag.some(a => a.competencia === c && a.faturamento > 0)) || comps[0];
+    const doMes = ag.filter(a => a.competencia === atual);
+    const fatMes = doMes.reduce((s,a) => s + a.faturamento, 0);
+    const notasMes = doMes.reduce((s,a) => s + a.notas, 0);
+    const guiasMes = guias.filter(g => g.competencia === atual).reduce((s,g) => s + (g.valor||0), 0);
+    const m = document.getElementById('m');
+    m.innerHTML = '<div class="kpis">'
+      + '<div class="kpi"><div class="lbl">Competência</div><div class="val">' + compBR(atual) + '</div></div>'
+      + '<div class="kpi"><div class="lbl">Faturamento carteira</div><div class="val">' + R$(fatMes) + '</div></div>'
+      + '<div class="kpi"><div class="lbl">Notas</div><div class="val">' + notasMes + '</div></div>'
+      + '<div class="kpi"><div class="lbl">Guias DAS</div><div class="val">' + R$(guiasMes) + '</div></div>'
+      + '</div>'
+      + '<div class="card"><h2>Faturamento por empresa — ' + compBR(atual) + '</h2><table>'
+      + '<tr><th>Empresa</th><th class="num">Notas</th><th class="num">Faturamento</th></tr>'
+      + doMes.filter(a => a.faturamento > 0).sort((x,y) => y.faturamento - x.faturamento).map(a => {
+          const e = emp.find(e2 => e2.cnpj === a.cnpj);
+          return '<tr><td>' + esc(e ? e.razao_social : a.cnpj) + '</td><td class="num">' + a.notas
+            + '</td><td class="num">' + R$(a.faturamento) + '</td></tr>';
+        }).join('') + '</table></div>'
+      + '<p class="muted">espelho atualizado de hora em hora pelo PC do escritório · '
+      + fat.length + ' faturamento(s) no log</p>';
+  },
+
+  async conferencia() {
+    const [ag, dec, guias, emp] = await Promise.all([
+      q('agregado', (t) => sb.from('agregado_espelho').select('*')),
+      q('pgdas_declarado', (t) => t.select('*')),
+      q('das_guia', (t) => t.select('*')),
+      q('empresas', (t) => t.select('cnpj, razao_social')),
+    ]);
+    const m = document.getElementById('m');
+    const nomes = new Map(emp.map(e => [e.cnpj, e.razao_social]));
+    const comps = [...new Set(ag.map(a => a.competencia))].sort().reverse().slice(0, 13);
+    m.innerHTML = '<select id="selComp">' + comps.map(c =>
+      '<option value="' + c + '">' + compBR(c) + '</option>').join('') + '</select><div id="tabela"></div>';
+    const desenha = () => {
+      const c = document.getElementById('selComp').value;
+      const linhas = ag.filter(a => a.competencia === c && (a.faturamento > 0 || a.notas > 0));
+      document.getElementById('tabela').innerHTML = '<div class="card"><h2>Faturado × declarado × guia — '
+        + compBR(c) + '</h2><table>'
+        + '<tr><th>Empresa</th><th class="num">Faturado (XML)</th><th class="num">Declarado</th><th class="num">Guia DAS</th><th>Situação</th></tr>'
+        + linhas.sort((x,y) => y.faturamento - x.faturamento).map(a => {
+            const d = dec.find(x => x.cnpj === a.cnpj && x.competencia === c);
+            const g = guias.find(x => x.cnpj === a.cnpj && x.competencia === c);
+            let sit = '<span class="tag aten">conferir</span>';
+            if (d) {
+              const dif = a.faturamento - d.valor;
+              sit = Math.abs(dif) <= 0.02 ? '<span class="tag ok">✓ bate</span>'
+                : dif > 0 ? '<span class="tag ruim">faturou ' + R$(dif) + ' a mais</span>'
+                : '<span class="tag aten">declarou ' + R$(-dif) + ' a mais</span>';
+            }
+            return '<tr><td>' + esc(nomes.get(a.cnpj) || a.cnpj) + '</td>'
+              + '<td class="num">' + R$(a.faturamento) + '</td>'
+              + '<td class="num">' + (d ? R$(d.valor) : '–') + '</td>'
+              + '<td class="num">' + (g ? R$(g.valor) : '–') + '</td>'
+              + '<td>' + sit + '</td></tr>';
+          }).join('') + '</table></div>';
+    };
+    document.getElementById('selComp').onchange = desenha;
+    desenha();
+  },
+
+  async financeiro() {
+    const [hon, fat, cob] = await Promise.all([
+      q('honorarios', (t) => t.select('*')),
+      q('faturamento_log', (t) => t.select('*')),
+      q('asaas_cobrancas', (t) => t.select('*')),
+    ]);
+    const ativos = hon.filter(h => h.ativo);
+    const totalMensal = ativos.reduce((s,h) => s + (h.valor||0), 0);
+    const abertas = cob.filter(c => ['PENDING','OVERDUE','AWAITING_RISK_ANALYSIS'].includes(c.status));
+    const vencidas = abertas.filter(c => c.status === 'OVERDUE');
+    const m = document.getElementById('m');
+    m.innerHTML = '<div class="kpis">'
+      + '<div class="kpi"><div class="lbl">Clientes ativos</div><div class="val">' + ativos.length + '</div></div>'
+      + '<div class="kpi"><div class="lbl">Honorários/mês</div><div class="val">' + R$(totalMensal) + '</div></div>'
+      + '<div class="kpi"><div class="lbl">Boletos abertos</div><div class="val">' + abertas.length + '</div></div>'
+      + '<div class="kpi"><div class="lbl">Vencidos</div><div class="val" style="color:var(--verm)">' + vencidas.length + '</div></div>'
+      + '</div>'
+      + '<div class="card"><h2>Últimos faturamentos automáticos</h2><table>'
+      + '<tr><th>Cliente</th><th class="num">Valor</th><th>NF</th><th>Vencimento</th><th>Status</th></tr>'
+      + fat.sort((a,b) => (b.criado_em||'').localeCompare(a.criado_em||'')).slice(0, 40).map(f =>
+          '<tr><td>' + esc(f.nome) + '</td><td class="num">' + R$(f.valor) + '</td>'
+          + '<td>' + (f.nfse_numero || '–') + '</td><td>' + dBR(f.vencimento) + '</td>'
+          + '<td>' + (f.status === 'ok' ? '<span class="tag ok">✓ NF+boleto</span>' : '<span class="tag ruim">' + esc(f.erro || 'erro') + '</span>') + '</td></tr>'
+        ).join('') + '</table>'
+      + (fat.length === 0 ? '<p class="muted">o primeiro faturamento automático roda no último dia do mês</p>' : '')
+      + '</div>'
+      + '<div class="card"><h2>Boletos em aberto (' + abertas.length + ')</h2><table>'
+      + '<tr><th>Vencimento</th><th class="num">Valor</th><th>Status</th></tr>'
+      + abertas.sort((a,b) => (a.vencimento||'').localeCompare(b.vencimento||'')).slice(0, 60).map(c =>
+          '<tr><td>' + dBR(c.vencimento) + '</td><td class="num">' + R$(c.valor) + '</td>'
+          + '<td>' + (c.status === 'OVERDUE' ? '<span class="tag ruim">vencido</span>' : '<span class="tag aten">aberto</span>') + '</td></tr>'
+        ).join('') + '</table></div>';
+  },
+
+  async parcelamentos() {
+    const [parc, pars] = await Promise.all([
+      q('parcelamentos', (t) => t.select('*')),
+      q('parcelas', (t) => t.select('*')),
+    ]);
+    const hoje = new Date().toISOString().slice(0, 10);
+    const m = document.getElementById('m');
+    m.innerHTML = parc.map(p => {
+      const minhas = pars.filter(x => x.parcelamento_id === p.id)
+        .sort((a,b) => (a.vencimento||'').localeCompare(b.vencimento||''));
+      const atrasadas = minhas.filter(x => !x.pago_em && x.vencimento < hoje);
+      return '<div class="card"><h2>' + esc(p.descricao || p.tipo) + ' '
+        + (atrasadas.length ? '<span class="tag ruim">' + atrasadas.length + ' em atraso — risco de rescisão!</span>' : '<span class="tag ok">em dia</span>')
+        + '</h2><table><tr><th>#</th><th>Vencimento</th><th class="num">Valor</th><th>Pago</th></tr>'
+        + minhas.map(x => '<tr><td>' + x.numero + '</td><td>' + dBR(x.vencimento) + '</td>'
+            + '<td class="num">' + R$(x.valor) + '</td>'
+            + '<td>' + (x.pago_em ? '<span class="tag ok">✓ ' + dBR(x.pago_em) + '</span>'
+              : (x.vencimento < hoje ? '<span class="tag ruim">ATRASADA</span>' : '<span class="tag aten">aberta</span>')) + '</td></tr>'
+          ).join('') + '</table></div>';
+    }).join('') || '<div class="card">nenhum parcelamento cadastrado</div>';
+  },
+};
+
+async function iniciar() {
+  const { data } = await sb.auth.getSession();
+  if (!data?.session) return telaLogin();
+  ir('dashboard');
+}
+iniciar();
+</script></body></html>
